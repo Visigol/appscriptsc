@@ -4,23 +4,20 @@ This document lists all the external API endpoints and calls used by the scraper
 
 ## Wolt
 
-*   **Venue Content API:** `https://consumer-api.wolt.com/consumer-api/v3/web/venue-content/slug/{venue_slug}`
 *   **Consumer Assortment API:** `https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/{venue_slug}/assortment`
-*   **Category API:** `https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/{venue_slug}/assortment/categories/slug/{category_slug}`
 
 ## Uber Eats
 
-*   **Get Store API:** `https://www.ubereats.com/_p/api/getStoreV1`
-*   **Get Catalog Presentation API:** `https://www.ubereats.com/_p/api/getCatalogPresentationV2`
+*   The scraper fetches the main page HTML and parses an embedded JSON data block (`__PRELOADED_STATE__`) to extract the menu data. No direct API calls are made.
 
 ## Glovo
 
-*   **Store Menu API:** `https://api.glovoapp.com/v3/stores/{store_id}/addresses/{address_id}/node/store_menu`
-*   **Partial Content API:** `https://api.glovoapp.com/v4/stores/{store_id}/addresses/{address_id}/content/partial`
+*   The scraper first fetches the main page HTML to extract the `storeId` and `addressId` from an embedded JSON data block.
+*   **Content API:** `https://api.glovoapp.com/v3/stores/{store_id}/addresses/{address_id}/content`
 
 ## Tazz
 
-*   No direct API calls are made. The website is scraped using Puppeteer to extract the menu data from the HTML.
+*   No direct API calls are made. The website is scraped by fetching the HTML and parsing it with regular expressions.
 
 ## Foody
 
@@ -34,7 +31,6 @@ This document lists all the external API endpoints and calls used by the scraper
 ## Pyszne.pl
 
 *   **Items API:** `https://globalmenucdn.eu-central-1.production.jet-external.com/{restaurant_slug}_{country_code}_items.json`
-*   **Item Details API:** `https://globalmenucdn.eu-central-1.production.jet-external.com/{restaurant_slug}_{country_code}_itemDetails.json`
 *   **Menu API:** `https://www.pyszne.{country_code}/api/restaurants/{restaurant_slug}/menu`
 
 ## Google Cloud Translate
