@@ -549,28 +549,37 @@ function scrapeUberEats(url) {
   const pageResponse = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
   const pageContent = pageResponse.getContentText();
 
-  // Look for the __PRELOADED_STATE__ JSON blob.
-  const jsonMatch = pageContent.match(/<script>window.__PRELOADED_STATE__ = ([\s\S]*?);<\/script>/);
-  if (!jsonMatch || !jsonMatch[1]) {
-    throw new Error('Invalid Uber Eats page: Could not find __PRELOADED_STATE__ JSON.');
-  }
-
-  const pageData = JSON.parse(jsonMatch[1]);
-
-  // The exact path to the menu data can change, so this might need updating in the future.
-  const stores = pageData?.stores || {};
+  // More robustly find the catalog data by checking all script tags for a valid JSON object.
+  const scriptRegex = /<script>([\s\S]*?)<\/script>/g;
+  let scriptMatch;
   let catalogSectionsMap;
 
-  // Find the first store object that has a catalogSectionsMap
-  for (const key in stores) {
-    if (stores[key]?.catalogSectionsMap) {
-      catalogSectionsMap = stores[key].catalogSectionsMap;
-      break;
+  while ((scriptMatch = scriptRegex.exec(pageContent)) !== null) {
+    const scriptContent = scriptMatch[1];
+    // We are looking for a script that defines a window object with a large JSON structure.
+    if (scriptContent.includes('window.__PRELOADED_STATE__') || scriptContent.includes('window.reduxStore')) {
+      try {
+        // This is a bit of a hack to execute the script content in a sandbox.
+        const jsonStr = scriptContent.substring(scriptContent.indexOf('{'));
+        const pageData = JSON.parse(jsonStr.trim().slice(0, -1)); // remove trailing semicolon
+
+        const stores = pageData?.stores || {};
+        for (const key in stores) {
+          if (stores[key]?.catalogSectionsMap) {
+            catalogSectionsMap = stores[key].catalogSectionsMap;
+            break;
+          }
+        }
+        if (catalogSectionsMap) break;
+
+      } catch (e) {
+        // Ignore parsing errors, as many script tags won't contain the JSON we need.
+      }
     }
   }
 
   if (!catalogSectionsMap) {
-     throw new Error('Could not find catalogSectionsMap in the page data.');
+     throw new Error('Could not find catalogSectionsMap in any of the page\'s script tags.');
   }
 
   const dishes = [];
