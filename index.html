@@ -137,13 +137,13 @@
           <select id="sourceOption">
             <option value="">Select an operation.</option>
             <option value="web_scrape_menu_items">Web Scrape: Restaurant Menu</option>
-            <option value="web_scrape_full_page_text" disabled>Foodora</option>
-            <option value="web_scrape_product_details" disabled>Restaurant personal website</option>
-            <option value="web_scrape_article_content" disabled>Tazz</option>
-            <option value="web_scrape_custom_selector" disabled>uberEats</option>
-            <option value="ocr_image" disabled>Wolt</option>
-            <option value="ocr_tables" disabled>Foody</option>
-            <option value="ocr_type" disabled>JustEat</option>
+            <option value="web_scrape_foodora">Foodora</option>
+            <option value="web_scrape_personal">Restaurant personal website</option>
+            <option value="web_scrape_tazz">Tazz</option>
+            <option value="web_scrape_ubereats">uberEats</option>
+            <option value="web_scrape_wolt">Wolt</option>
+            <option value="web_scrape_foody">Foody</option>
+            <option value="web_scrape_justeat">JustEat</option>
           </select>
         </div>
         <div class="form-group" id="urlInputGroup">
@@ -232,10 +232,7 @@
       resetOutputs();
       const selected = sourceOptionSelect.value;
       if (!selected) { showStatus('Please select an operation.', 'var(--bolt-error-red)'); return; }
-      if (!selected.startsWith('web_scrape')) {
-        showStatus('This operation is not available yet.', 'var(--bolt-error-red)');
-        return;
-      }
+
       const url = (targetUrlInput.value || '').trim();
       if (!url) { showStatus('Please enter a Web URL.', 'var(--bolt-error-red)'); return; }
       showStatus('Starting scrape…', 'var(--bolt-green)');
@@ -254,7 +251,7 @@
           showStatus(`Start failed: ${err.message}`, 'var(--bolt-error-red)');
           processButton.disabled = false;
         })
-        .doPost({postData: {contents: JSON.stringify({url: url})}});
+        .doPost({url: url});
     });
 
     function pollStatus(jobId) {
@@ -268,19 +265,17 @@
                 finishProgress();
                 showStatus('Scrape complete!', 'var(--bolt-green)');
                 processButton.disabled = false;
-                // Since we are writing to a sheet, there is no zip to download.
-                // We can show the results from the sheet.
+
                 if(status.result) {
-                    const resultData = JSON.parse(status.result);
                     outputSection.style.display = 'flex';
-                    totalDishesSpan.textContent = resultData.counters.dishes ?? 0;
-                    totalCategoriesSpan.textContent = resultData.counters.categories ?? 0;
+                    totalDishesSpan.textContent = status.result.counters.dishes ?? 0;
+                    totalCategoriesSpan.textContent = status.result.counters.categories ?? 0;
                 }
 
               } else if (status.status === 'error') {
                 clearInterval(poll);
                 finishProgress();
-                showStatus(`Error: ${status.error || 'Unknown error'}`, 'var(--bolt-error-red)');
+                showStatus(`Error: ${status.result.error || 'Unknown error'}`, 'var(--bolt-error-red)');
                 resetOutputs();
                 processButton.disabled = false;
               }
@@ -294,7 +289,7 @@
             resetOutputs();
             processButton.disabled = false;
           })
-          .getContent(jobId);
+          .getJobStatus(jobId);
       }, 5000);
     }
 </script>
