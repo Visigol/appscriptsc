@@ -173,8 +173,6 @@
     </div>
   </div>
   <script>
-    // ==== CONFIG ====
-    const API_BASE = 'https://d1nxhjhduvj12x.cloudfront.net/Dev/scraper-function';
     // ==== DOM ====
     const sourceOptionSelect = document.getElementById('sourceOption');
     const targetUrlInput = document.getElementById('targetUrl');
@@ -190,6 +188,7 @@
     const totalCategoriesSpan = document.getElementById('totalCategories');
     const totalOptionsSpan = document.getElementById('totalOptions');
     const totalOptionGroupsSpan = document.getElementById('totalOptionGroups');
+
     // ==== UI helpers ====
     function showStatus(msg, color = 'var(--text-primary)') {
       statusMessage.textContent = msg;
@@ -218,84 +217,18 @@
     }
     function applyStatusToProgress(status) {
       const map = {
-        navigating: 20, cookies_closed: 30, reading_menu: 30, scrolling: 40,
-        extracting: 50, translating: 60, saving_csv: 70, uploading_s3: 80,
-        importing: 90, completed: 100
+        queued: 10,
+        scraping: 50,
+        completed: 100,
+        error: 100
       };
       const pct = map[status] ?? 10;
       setProgress(pct);
       showStatus(status ? `Status: ${status.replace('_', ' ')}` : 'Starting...');
     }
-    // ==== robust start with retries ====
-    async function startScrapeWithRetries(url, maxAttempts = 3) {
-      let lastErr;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          const resp = await fetch(API_BASE, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url })
-          });
-          if (!resp.ok) {
-            const text = await resp.text().catch(() => '');
-            throw new Error(`HTTP ${resp.status}${text ? `: ${text.slice(0, 200)}` : ''}`);
-          }
-          const raw = await resp.text();
-          const data = JSON.parse(raw);
-          if (!data || !data.jobId) throw new Error('Missing jobId in response');
-          return data.jobId;
-        } catch (err) {
-          lastErr = err;
-          if (attempt < maxAttempts) {
-            showStatus(`Retrying start (${attempt + 1}/${maxAttempts})…`, 'var(--bolt-green)');
-            await new Promise(r => setTimeout(r, 1500 * attempt));
-          }
-        }
-      }
-      throw lastErr || new Error('Failed to start scrape');
-    }
-    // ==== Fetch artifacts and enable ZIP download ====
-    async function fetchArtifacts(jobId) {
-      try {
-        const res = await fetch(`${API_BASE}?jobId=${encodeURIComponent(jobId)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
-        outputSection.style.display = 'flex';
-
-        // Update artifact names
-        if (data.artifacts && data.artifacts.fileNames) {
-          const names = Object.values(data.artifacts.fileNames).filter(Boolean);
-          artifactNames.textContent = names.length ? names.join(', ') : 'Not available';
-        } else {
-          artifactNames.textContent = 'Not available';
-        }
-
-        // Update counters
-        if (data.counters) {
-          totalDishesSpan.textContent = data.counters.dishes ?? 0;
-          totalPhotosSpan.textContent = data.counters.images ?? 0;
-          totalCategoriesSpan.textContent = data.counters.categories ?? 0;
-          totalOptionsSpan.textContent = data.counters.options ?? 0;
-          totalOptionGroupsSpan.textContent = data.counters.optionGroups ?? 0;
-        }
-
-        // Enable ZIP download if available
-        if (data.zipUrl) {
-          downloadZipButton.disabled = false;
-          downloadZipButton.onclick = () => {
-            window.location.href = data.zipUrl.replace('s3://', 'https://').replace('?jobId=', '/download?jobId=');
-          };
-        } else {
-          downloadZipButton.disabled = true;
-          showStatus('No ZIP file available for download.', 'var(--bolt-error-red)');
-        }
-      } catch (err) {
-        showStatus(`Artifacts error: ${err.message}`, 'var(--bolt-error-red)');
-      }
-    }
     // ==== Main click ====
-    processButton.addEventListener('click', async () => {
+    processButton.addEventListener('click', () => {
       resetOutputs();
       const selected = sourceOptionSelect.value;
       if (!selected) { showStatus('Please select an operation.', 'var(--bolt-error-red)'); return; }
@@ -307,41 +240,63 @@
       if (!url) { showStatus('Please enter a Web URL.', 'var(--bolt-error-red)'); return; }
       showStatus('Starting scrape…', 'var(--bolt-green)');
       setProgress(5);
-      try {
-        const jobId = await startScrapeWithRetries(url, 3);
-        showStatus('Scrape started…', 'var(--bolt-green)');
-        setProgress(20);
-        const poll = setInterval(async () => {
-          try {
-            const res = await fetch(`${API_BASE}?jobId=${encodeURIComponent(jobId)}`);
-            const status = await res.json();
-            if (!res.ok) throw new Error(status && status.error ? status.error : `HTTP ${res.status}`);
-            applyStatusToProgress(status.status);
-            if (status.status === 'completed') {
-              clearInterval(poll);
-              finishProgress();
-              showStatus('Scrape complete!', 'var(--bolt-green)');
-              await fetchArtifacts(jobId);
-            } else if (status.status === 'error') {
-              clearInterval(poll);
-              finishProgress();
-              showStatus(`Error: ${status.error || 'Unknown error'}`, 'var(--bolt-error-red)');
-              resetOutputs();
+      processButton.disabled = true;
+
+      google.script.run
+        .withSuccessHandler(job => {
+          showStatus('Scrape started…', 'var(--bolt-green)');
+          setProgress(20);
+          pollStatus(job.jobId);
+        })
+        .withFailureHandler(err => {
+          finishProgress();
+          console.error('Start error:', err);
+          showStatus(`Start failed: ${err.message}`, 'var(--bolt-error-red)');
+          processButton.disabled = false;
+        })
+        .doPost({postData: {contents: JSON.stringify({url: url})}});
+    });
+
+    function pollStatus(jobId) {
+      const poll = setInterval(() => {
+        google.script.run
+          .withSuccessHandler(status => {
+            if (status) {
+              applyStatusToProgress(status.status);
+              if (status.status === 'completed') {
+                clearInterval(poll);
+                finishProgress();
+                showStatus('Scrape complete!', 'var(--bolt-green)');
+                processButton.disabled = false;
+                // Since we are writing to a sheet, there is no zip to download.
+                // We can show the results from the sheet.
+                if(status.result) {
+                    const resultData = JSON.parse(status.result);
+                    outputSection.style.display = 'flex';
+                    totalDishesSpan.textContent = resultData.counters.dishes ?? 0;
+                    totalCategoriesSpan.textContent = resultData.counters.categories ?? 0;
+                }
+
+              } else if (status.status === 'error') {
+                clearInterval(poll);
+                finishProgress();
+                showStatus(`Error: ${status.error || 'Unknown error'}`, 'var(--bolt-error-red)');
+                resetOutputs();
+                processButton.disabled = false;
+              }
             }
-          } catch (err) {
+          })
+          .withFailureHandler(err => {
             clearInterval(poll);
             finishProgress();
             console.error('Poll error:', err);
             showStatus(`Error: ${err.message}`, 'var(--bolt-error-red)');
             resetOutputs();
-          }
-        }, 10000);
-      } catch (err) {
-        finishProgress();
-        console.error('Start error:', err);
-        showStatus(`Start failed: ${err.message}`, 'var(--bolt-error-red)');
-      }
-    });
-  </script>
+            processButton.disabled = false;
+          })
+          .getContent(jobId);
+      }, 5000);
+    }
+</script>
 </body>
 </html>
