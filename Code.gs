@@ -543,36 +543,37 @@ function scrapeFoodora(url) {
 
 
 function scrapeUberEats(url) {
-  // Extract the store UUID from the URL. This is a simplification and might not work for all URL formats.
-  const storeUuidMatch = url.match(/\/store\/[^\/]+\/([a-zA-Z0-9-]+)/);
-  if (!storeUuidMatch || !storeUuidMatch[1]) {
-    // A more robust solution would be to fetch the page and parse out the UUID from the HTML,
-    // but Apps Script's UrlFetchApp doesn't execute JavaScript, which is often necessary.
-    // We will rely on this URL structure. A potential improvement is to find the UUID from the HTML content.
-    throw new Error('Invalid Uber Eats URL: Could not extract store UUID from the URL.');
-  }
-  const storeUuid = storeUuidMatch[1];
   const restaurantName = (url.split('/store/')[1] || 'UberEats_Restaurant').split('/')[0];
 
-  const apiUrl = "https://www.ubereats.com/api/getStoreV1?localeCode=en-US";
-  const payload = {
-    storeUuid: storeUuid
-  };
-  const options = {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(payload),
-    headers: {
-      'x-csrf-token': 'x' // A required header for the Uber Eats API
-    },
-    muteHttpExceptions: false
-  };
+  // Fetch the page HTML to find the embedded JSON data
+  const pageResponse = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  const pageContent = pageResponse.getContentText();
 
-  const response = UrlFetchApp.fetch(apiUrl, options);
-  const data = JSON.parse(response.getContentText());
+  // Look for the __PRELOADED_STATE__ JSON blob.
+  const jsonMatch = pageContent.match(/<script>window.__PRELOADED_STATE__ = ([\s\S]*?);<\/script>/);
+  if (!jsonMatch || !jsonMatch[1]) {
+    throw new Error('Invalid Uber Eats page: Could not find __PRELOADED_STATE__ JSON.');
+  }
+
+  const pageData = JSON.parse(jsonMatch[1]);
+
+  // The exact path to the menu data can change, so this might need updating in the future.
+  const stores = pageData?.stores || {};
+  let catalogSectionsMap;
+
+  // Find the first store object that has a catalogSectionsMap
+  for (const key in stores) {
+    if (stores[key]?.catalogSectionsMap) {
+      catalogSectionsMap = stores[key].catalogSectionsMap;
+      break;
+    }
+  }
+
+  if (!catalogSectionsMap) {
+     throw new Error('Could not find catalogSectionsMap in the page data.');
+  }
 
   const dishes = [];
-  const catalogSectionsMap = data.data.catalogSectionsMap || {};
   let categoryCount = 0;
 
   for (const sectionId in catalogSectionsMap) {
@@ -618,19 +619,25 @@ function scrapeUberEats(url) {
 }
 
 function scrapeGlovo(url) {
-  // Extract store and address IDs from the URL.
-  // This is a less robust method than network interception.
-  const urlParts = url.split('/');
-  const storeIdIndex = urlParts.indexOf('stores') + 1;
-  const addressIdIndex = urlParts.indexOf('addresses') + 1;
+  const restaurantName = (url.split('/').filter(Boolean).pop() || 'Glovo_Restaurant');
 
-  if (storeIdIndex === 0 || addressIdIndex === 0 || !urlParts[storeIdIndex] || !urlParts[addressIdIndex]) {
-    throw new Error('Invalid Glovo URL: Could not extract store or address ID from the URL.');
+  // First, fetch the page HTML to find the storeId and addressId
+  const pageResponse = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  const pageContent = pageResponse.getContentText();
+
+  // Look for a JSON blob containing page metadata. This is more reliable than loose regex.
+  const jsonMatch = pageContent.match(/<script type="application\/json" data-compid="page-meta-data">([\s\S]*?)<\/script>/);
+  if (!jsonMatch || !jsonMatch[1]) {
+    throw new Error('Invalid Glovo page: Could not find page metadata JSON.');
   }
 
-  const storeId = urlParts[storeIdIndex];
-  const addressId = urlParts[addressIdIndex];
-  const restaurantName = (url.split('/').filter(Boolean).pop() || 'Glovo_Restaurant');
+  const pageData = JSON.parse(jsonMatch[1]);
+  const storeId = pageData?.seo?.analytics?.storeId;
+  const addressId = pageData?.address?.id;
+
+  if (!storeId || !addressId) {
+     throw new Error('Invalid Glovo URL: Could not extract store or address ID from page data.');
+  }
 
   const apiUrl = `https://api.glovoapp.com/v3/stores/${storeId}/addresses/${addressId}/content`;
 
